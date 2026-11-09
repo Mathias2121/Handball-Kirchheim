@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private var progress = ""
     private var errorText: String? = null
     private var teamFilter: String? = null
+    private var gameTeamFilter: String? = null
     private var showAllScorers = false
     private val expanded = HashSet<String>()
 
@@ -69,7 +70,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(12), dp(12), dp(12))
-            setBackgroundColor(c(R.color.accent))
+            setBackgroundColor(c(R.color.primary))
         }
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(text("SG HD-Kirchheim", 20f, R.color.on_accent, bold = true))
@@ -155,7 +156,7 @@ class MainActivity : Activity() {
         }
         when (tab) {
             Tab.TABELLE -> renderTable(league)
-            Tab.SPIELPLAN -> renderGames(league, league.games, false)
+            Tab.SPIELPLAN -> renderSchedule(league)
             Tab.KIRCHHEIM -> renderGames(league, league.games.filter { it.involvesKirchheim }, true)
             Tab.TORE -> renderScorers(league)
         }
@@ -182,8 +183,24 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun renderGames(league: League, games: List<Game>, kirchheim: Boolean) {
+    /** Gesamtspielplan mit Teamauswahl; ein Team zeigt alle seine Heim- und Auswärtsspiele. */
+    private fun renderSchedule(league: League) {
+        val teams = league.games.flatMap { listOf(it.home, it.guest) }
+            .filter { it.isNotBlank() }
+            .distinctBy { Aggregator.teamKey(it) }
+            .sorted()
+        if (gameTeamFilter != null && teams.none { Aggregator.teamKey(it) == gameTeamFilter }) gameTeamFilter = null
+        val chips = teamChips(teams, gameTeamFilter) { gameTeamFilter = it }.apply { setPadding(0, 0, 0, dp(8)) }
+        val games = league.games.filter {
+            gameTeamFilter == null ||
+                Aggregator.teamKey(it.home) == gameTeamFilter || Aggregator.teamKey(it.guest) == gameTeamFilter
+        }
+        renderGames(league, games, false, chips)
+    }
+
+    private fun renderGames(league: League, games: List<Game>, kirchheim: Boolean, chips: View? = null) {
         content.addView(heading(if (kirchheim) "Spielplan SG HD-Kirchheim" else "Gesamtspielplan"))
+        chips?.let { content.addView(it) }
         if (kirchheim) {
             val sieg = games.count { it.outcomeForKirchheim() == 'S' }
             val ud = games.count { it.outcomeForKirchheim() == 'U' }
@@ -270,18 +287,7 @@ class MainActivity : Activity() {
         val teams = all.map { it.team }.distinctBy { Aggregator.teamKey(it) }.sorted()
         if (teamFilter != null && teams.none { Aggregator.teamKey(it) == teamFilter }) teamFilter = null
 
-        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun chip(label: String, key: String?) {
-            val sel = teamFilter == key
-            chips.addView(text(label, 13f, if (sel) R.color.on_accent else R.color.fg, bold = sel).apply {
-                setBackgroundColor(c(if (sel) R.color.accent else R.color.card))
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                setOnClickListener { teamFilter = key; render() }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
-        }
-        chip("Alle", null)
-        for (t in teams) chip(t, Aggregator.teamKey(t))
-        content.addView(android.widget.HorizontalScrollView(this).apply { addView(chips) })
+        content.addView(teamChips(teams, teamFilter) { teamFilter = it })
 
         val list = all.filter { teamFilter == null || Aggregator.teamKey(it.team) == teamFilter }
         val shown = if (showAllScorers) list else list.take(15)
@@ -314,6 +320,22 @@ class MainActivity : Activity() {
     }
 
     // ---------- kleine UI-Helfer ----------
+
+    /** Waagerechte Chip-Leiste zur Teamauswahl. [current] ist der aktive Teamschlüssel, null bedeutet „Alle“. */
+    private fun teamChips(teams: List<String>, current: String?, onSelect: (String?) -> Unit): View {
+        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun chip(label: String, key: String?) {
+            val sel = current == key
+            chips.addView(text(label, 13f, if (sel) R.color.on_accent else R.color.fg, bold = sel).apply {
+                setBackgroundColor(c(if (sel) R.color.primary else R.color.card))
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                setOnClickListener { onSelect(key); render() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
+        }
+        chip("Alle", null)
+        for (t in teams) chip(t, Aggregator.teamKey(t))
+        return android.widget.HorizontalScrollView(this).apply { addView(chips) }
+    }
 
     private fun text(t: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = t
